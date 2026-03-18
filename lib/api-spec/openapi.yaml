@@ -1,22 +1,28 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Flood Risk Prediction & Alert Platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: districts
+    description: District flood data
+  - name: alerts
+    description: Active flood alerts
+  - name: monitoring
+    description: River and rainfall monitoring stations
+  - name: authorities
+    description: Authorities coordination panel
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +30,153 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /districts:
+    get:
+      operationId: getDistricts
+      tags: [districts]
+      summary: Get all districts with current flood risk
+      responses:
+        "200":
+          description: List of districts with risk levels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/District"
+
+  /districts/{id}:
+    get:
+      operationId: getDistrictById
+      tags: [districts]
+      summary: Get a specific district
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: District details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/District"
+
+  /alerts:
+    get:
+      operationId: getAlerts
+      tags: [alerts]
+      summary: Get active flood alerts
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: severity
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [low, moderate, high, critical]
+      responses:
+        "200":
+          description: List of active alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FloodAlert"
+
+  /stations:
+    get:
+      operationId: getStations
+      tags: [monitoring]
+      summary: Get all monitoring stations
+      responses:
+        "200":
+          description: List of monitoring stations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MonitoringStation"
+
+  /stations/{id}/readings:
+    get:
+      operationId: getStationReadings
+      tags: [monitoring]
+      summary: Get time-series readings for a station
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: hours
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 24
+      responses:
+        "200":
+          description: Station readings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StationReading"
+
+  /summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [districts]
+      summary: Get dashboard summary stats
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /authorities/resources:
+    get:
+      operationId: getAuthorityResources
+      tags: [authorities]
+      summary: Get emergency resources and deployment status
+      responses:
+        "200":
+          description: List of emergency resources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EmergencyResource"
+
+  /authorities/evacuations:
+    get:
+      operationId: getEvacuationOrders
+      tags: [authorities]
+      summary: Get active evacuation orders
+      responses:
+        "200":
+          description: List of evacuation orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EvacuationOrder"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +187,241 @@ components:
       required:
         - status
 
+    District:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        state:
+          type: string
+        riskLevel:
+          type: string
+          enum: [low, moderate, high, critical]
+        riskScore:
+          type: number
+          description: 0-100 risk score
+        rainfall24h:
+          type: number
+          description: Rainfall in mm over 24h
+        riverLevel:
+          type: number
+          description: Current river level in meters
+        dangerLevel:
+          type: number
+          description: Danger threshold in meters
+        latitude:
+          type: number
+        longitude:
+          type: number
+        populationAffected:
+          type: integer
+        lastUpdated:
+          type: string
+      required:
+        - id
+        - name
+        - state
+        - riskLevel
+        - riskScore
+        - rainfall24h
+        - riverLevel
+        - dangerLevel
+        - latitude
+        - longitude
+        - populationAffected
+        - lastUpdated
+
+    FloodAlert:
+      type: object
+      properties:
+        id:
+          type: integer
+        districtId:
+          type: integer
+        districtName:
+          type: string
+        state:
+          type: string
+        severity:
+          type: string
+          enum: [low, moderate, high, critical]
+        message:
+          type: string
+        triggeredAt:
+          type: string
+        isActive:
+          type: boolean
+        riverLevel:
+          type: number
+        dangerLevel:
+          type: number
+      required:
+        - id
+        - districtId
+        - districtName
+        - state
+        - severity
+        - message
+        - triggeredAt
+        - isActive
+        - riverLevel
+        - dangerLevel
+
+    MonitoringStation:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        river:
+          type: string
+        district:
+          type: string
+        state:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        currentLevel:
+          type: number
+        warningLevel:
+          type: number
+        dangerLevel:
+          type: number
+        rainfall1h:
+          type: number
+        status:
+          type: string
+          enum: [normal, warning, danger, critical]
+      required:
+        - id
+        - name
+        - river
+        - district
+        - state
+        - latitude
+        - longitude
+        - currentLevel
+        - warningLevel
+        - dangerLevel
+        - rainfall1h
+        - status
+
+    StationReading:
+      type: object
+      properties:
+        id:
+          type: integer
+        stationId:
+          type: integer
+        timestamp:
+          type: string
+        riverLevel:
+          type: number
+        rainfall:
+          type: number
+      required:
+        - id
+        - stationId
+        - timestamp
+        - riverLevel
+        - rainfall
+
+    DashboardSummary:
+      type: object
+      properties:
+        totalDistricts:
+          type: integer
+        criticalDistricts:
+          type: integer
+        highRiskDistricts:
+          type: integer
+        moderateRiskDistricts:
+          type: integer
+        lowRiskDistricts:
+          type: integer
+        activeAlerts:
+          type: integer
+        totalPopulationAtRisk:
+          type: integer
+        avgRainfall24h:
+          type: number
+        statesAffected:
+          type: integer
+      required:
+        - totalDistricts
+        - criticalDistricts
+        - highRiskDistricts
+        - moderateRiskDistricts
+        - lowRiskDistricts
+        - activeAlerts
+        - totalPopulationAtRisk
+        - avgRainfall24h
+        - statesAffected
+
+    EmergencyResource:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [rescue_boat, helicopter, medical_team, ndrf_team, relief_camp]
+        district:
+          type: string
+        state:
+          type: string
+        count:
+          type: integer
+        deployed:
+          type: integer
+        status:
+          type: string
+          enum: [standby, deployed, returning]
+      required:
+        - id
+        - type
+        - district
+        - state
+        - count
+        - deployed
+        - status
+
+    EvacuationOrder:
+      type: object
+      properties:
+        id:
+          type: integer
+        districtId:
+          type: integer
+        districtName:
+          type: string
+        state:
+          type: string
+        villages:
+          type: array
+          items:
+            type: string
+        estimatedPeople:
+          type: integer
+        evacuated:
+          type: integer
+        status:
+          type: string
+          enum: [ordered, in_progress, completed]
+        issuedAt:
+          type: string
+      required:
+        - id
+        - districtId
+        - districtName
+        - state
+        - villages
+        - estimatedPeople
+        - evacuated
+        - status
+        - issuedAt

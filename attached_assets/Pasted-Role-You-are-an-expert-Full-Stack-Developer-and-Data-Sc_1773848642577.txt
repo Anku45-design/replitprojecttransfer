@@ -1,0 +1,24 @@
+Role: You are an expert Full-Stack Developer and Data Scientist.
+Project Goal: Build a "Flood Risk Prediction & Alert Platform" designed for the Indian context (specifically targeting states like Bihar, Assam, and Kerala). The goal is to move from reactive to predictive flood management.
+1. Core Features & Functional Requirements
+Real-time Dashboard: Create a dashboard that displays rainfall levels and river water levels.
+Predictive Analytics: Implement a Python-based logic (using historical data trends) to predict flood risks at a district level.
+Interactive Heatmap: Use a map library (like Leaflet or Mapbox) to display a district-level risk heatmap (Green/Yellow/Red).
+Alert System: A system to trigger SMS/Email notifications when water levels cross a critical threshold.
+Authorities Panel: A dedicated view for emergency planning and evacuation coordination.
+2. Technical Stack
+Backend: Python with FastAPI or Flask.
+Frontend: React or Streamlit (for rapid dashboarding).
+Database: PostgreSQL (to store historical rainfall and river level logs).
+Map Integration: Use OpenStreetMap or Leaflet.js to visualize Indian districts.
+Data Simulation: Since live sensor APIs are restricted, create a robust "Mock Data Generator" script that simulates fluctuating river levels and rainfall intensity for testing.
+3. Specific UI/UX Instructions
+Clean & Serious: The UI should look like a professional disaster management tool (dark mode or high-contrast clean white).
+Action-Oriented: Include a "Current Alerts" sidebar that lists active high-risk areas.
+Responsive: Ensure the dashboard works on mobile devices for field officers.
+4. Implementation Steps
+Start by setting up the Python backend and a basic database schema for districts and weather logs.
+Build the data simulation engine to populate the charts.
+Integrate the Map component to show high-risk zones based on the simulated data.
+Add the logic for "Early Warning" triggers.
+Please start by initializing the project structure and the simulated data engine.

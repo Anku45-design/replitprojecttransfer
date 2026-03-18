@@ -1,0 +1,18 @@
+packages:
+  "recharts": "Data visualization for river levels and rainfall charts"
+  "react-leaflet": "Interactive mapping for district risk heatmaps"
+  "leaflet": "Core mapping library required by react-leaflet"
+  "@types/leaflet": "TypeScript definitions for leaflet"
+  "date-fns": "Formatting timestamps for time-series charts"
+  "clsx": "Utility for constructing className strings conditionally"
+  "tailwind-merge": "Utility for merging tailwind classes without conflicts"
+
+images:
+  - path: "artifacts/flood-platform/public/images/logo.png"
+    description: "A minimalist, serious emblem for a disaster management platform, featuring a stylized water wave and a radar/shield motif. Dark navy and bright orange/red accents, transparent background."
+    aspect_ratio: "1:1"
+
+notes:
+  - "The application uses @workspace/api-client-react for data fetching, representing a real-time command center."
+  - "Polling is simulated using React Query's refetchInterval (30 seconds)."
+  - "Map view requires leaflet CSS, which will be imported in App.tsx."
