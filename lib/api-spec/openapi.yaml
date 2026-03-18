@@ -219,6 +219,12 @@ components:
           type: integer
         lastUpdated:
           type: string
+        rateOfRise:
+          type: number
+          description: River level rise in meters over the last 3 hours (null if no recent data)
+        rateOfRiseTriggered:
+          type: boolean
+          description: True if rise >0.2m in 3h forced this district to CRITICAL regardless of absolute level
       required:
         - id
         - name
@@ -232,6 +238,8 @@ components:
         - longitude
         - populationAffected
         - lastUpdated
+        - rateOfRise
+        - rateOfRiseTriggered
 
     FloodAlert:
       type: object

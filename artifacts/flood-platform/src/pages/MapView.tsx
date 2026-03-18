@@ -35,6 +35,8 @@ interface District {
   longitude: number;
   populationAffected: number;
   lastUpdated: string;
+  rateOfRise: number;
+  rateOfRiseTriggered: boolean;
 }
 
 function RiverLevelGauge({ current, danger }: { current: number; danger: number }) {
@@ -200,6 +202,33 @@ function DistrictSidePanel({
 
       {/* Body */}
       <div style={{ padding: "14px 16px" }}>
+        {/* Rate of Rise warning banner */}
+        {district.rateOfRiseTriggered && (
+          <div
+            style={{
+              background: "rgba(239,68,68,0.12)",
+              border: "1px solid rgba(239,68,68,0.4)",
+              borderRadius: "8px",
+              padding: "10px 12px",
+              marginBottom: "12px",
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "8px",
+            }}
+          >
+            <AlertTriangle size={16} color="#ef4444" style={{ flexShrink: 0, marginTop: "1px" }} />
+            <div>
+              <div style={{ fontWeight: 700, color: "#ef4444", fontSize: "12px", letterSpacing: "0.03em" }}>
+                RAPID RISE DETECTED
+              </div>
+              <div style={{ color: "#fca5a5", fontSize: "11px", marginTop: "2px" }}>
+                River rose <strong>+{district.rateOfRise.toFixed(2)}m</strong> in the last 3 hours.
+                Risk upgraded to CRITICAL — early evacuation advised.
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Risk score */}
         <div style={{ marginBottom: "14px" }}>
           <div

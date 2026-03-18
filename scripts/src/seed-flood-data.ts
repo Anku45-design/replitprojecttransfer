@@ -81,18 +81,37 @@ async function seedData() {
 
   console.log(`Inserted ${stations.length} stations`);
 
-  // Seed 24 hours of readings for each station
+  // Seed 24 hours of readings for each station.
+  // Key design goal: Darbhanga (Hayaghat Gauge) and Dhemaji must show a
+  // measurable rate-of-rise > 0.2m within the last 3 hours so the backend
+  // rate-of-rise check is triggered even if their absolute level is below
+  // the danger mark.  All other stations follow a gentle random walk.
+  const RAPID_RISE_STATIONS = new Set(["Hayaghat Gauge", "Dhemaji Station"]);
   const now = Date.now();
   const readings = stations.flatMap((station) => {
     return Array.from({ length: 48 }, (_, i) => {
       const timestamp = new Date(now - (47 - i) * 30 * 60 * 1000);
-      const fluctuation = (Math.random() - 0.5) * 2;
-      const trend = i > 36 ? 0.05 * (i - 36) : 0;
+      const isRecentReading = i >= 42; // last 3 hours = readings 42..47
+      const fluctuation = (Math.random() - 0.5) * 0.6;
+
+      let riverLevel: number;
+      if (RAPID_RISE_STATIONS.has(station.name)) {
+        // Baseline: level is ~0.5m below current (level "now" = currentLevel)
+        // Ramp it up over the 24h window; rapid acceleration in the last 3h.
+        const baselineRise = (i / 47) * 0.5; // slow underlying rise over 24h
+        const rapidRise = isRecentReading ? (i - 42) * 0.065 : 0; // +0.065m per 30-min step = ~0.39m in 3h
+        riverLevel = Math.max(0, station.currentLevel - 0.5 + baselineRise + rapidRise + fluctuation * 0.3);
+      } else {
+        // Gentle random walk for all other stations
+        const gentleTrend = (i / 47) * 0.3;
+        riverLevel = Math.max(0, station.currentLevel - 1.5 + gentleTrend + fluctuation);
+      }
+
       return {
         stationId: station.id,
         timestamp,
-        riverLevel: Math.max(0, station.currentLevel - 3 + trend + fluctuation),
-        rainfall: Math.max(0, station.rainfall1h + (Math.random() - 0.3) * 8),
+        riverLevel,
+        rainfall: Math.max(0, station.rainfall1h + (Math.random() - 0.3) * 6),
       };
     });
   });

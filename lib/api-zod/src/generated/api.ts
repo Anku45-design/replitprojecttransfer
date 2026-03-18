@@ -30,6 +30,16 @@ export const GetDistrictsResponseItem = zod.object({
   longitude: zod.number(),
   populationAffected: zod.number(),
   lastUpdated: zod.string(),
+  rateOfRise: zod
+    .number()
+    .describe(
+      "River level rise in meters over the last 3 hours (null if no recent data)",
+    ),
+  rateOfRiseTriggered: zod
+    .boolean()
+    .describe(
+      "True if rise >0.2m in 3h forced this district to CRITICAL regardless of absolute level",
+    ),
 });
 export const GetDistrictsResponse = zod.array(GetDistrictsResponseItem);
 
@@ -53,6 +63,16 @@ export const GetDistrictByIdResponse = zod.object({
   longitude: zod.number(),
   populationAffected: zod.number(),
   lastUpdated: zod.string(),
+  rateOfRise: zod
+    .number()
+    .describe(
+      "River level rise in meters over the last 3 hours (null if no recent data)",
+    ),
+  rateOfRiseTriggered: zod
+    .boolean()
+    .describe(
+      "True if rise >0.2m in 3h forced this district to CRITICAL regardless of absolute level",
+    ),
 });
 
 /**

@@ -36,6 +36,10 @@ export interface District {
   longitude: number;
   populationAffected: number;
   lastUpdated: string;
+  /** River level rise in meters over the last 3 hours (null if no recent data) */
+  rateOfRise: number;
+  /** True if rise >0.2m in 3h forced this district to CRITICAL regardless of absolute level */
+  rateOfRiseTriggered: boolean;
 }
 
 export type FloodAlertSeverity =
