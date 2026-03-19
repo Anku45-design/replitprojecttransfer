@@ -12,32 +12,123 @@ import { eq, desc, and, gte, inArray } from "drizzle-orm";
 
 const router: IRouter = Router();
 
-// ─── Rate-of-Rise helpers ────────────────────────────────────────────────────
-const RISE_THRESHOLD_METERS = 0.2; // trigger CRITICAL if rise > this in 3h
-const RISE_WINDOW_MS = 3 * 60 * 60 * 1000; // 3 hours
+// ─── Open-Meteo live rainfall cache ──────────────────────────────────────────
+// Cache TTL: 20 minutes — weather data is not meaningful at sub-minute granularity.
+const RAINFALL_CACHE_TTL_MS = 20 * 60 * 1000;
+
+interface RainfallCache {
+  fetchedAt: number;
+  data: Map<number, number>; // districtId → rainfall_mm_24h
+}
+
+let rainfallCache: RainfallCache | null = null;
 
 /**
- * Compute per-district rate-of-rise from station readings in the last 3 hours.
- * Returns a map of districtName → { rise: number, triggered: boolean }.
- *
- * Logic:
- *   - Find all monitoring stations and group by district name.
- *   - For each station, compare the oldest reading in the window to the newest.
- *   - If ANY station in a district shows a rise > RISE_THRESHOLD_METERS, the
- *     district is "triggered" and its riskLevel is upgraded to "critical".
+ * Fetch yesterday's precipitation sum (mm) from Open-Meteo for every district
+ * using a single batched request (comma-separated lat/lon arrays).
+ * Falls back to the district's seeded rainfall24h value on any error.
  */
+async function fetchLiveRainfall(
+  districts: Array<{ id: number; latitude: number; longitude: number; rainfall24h: number }>,
+): Promise<Map<number, number>> {
+  // Return cached value if still fresh
+  if (rainfallCache && Date.now() - rainfallCache.fetchedAt < RAINFALL_CACHE_TTL_MS) {
+    return rainfallCache.data;
+  }
+
+  try {
+    const lats = districts.map((d) => d.latitude).join(",");
+    const lons = districts.map((d) => d.longitude).join(",");
+
+    const url =
+      `https://api.open-meteo.com/v1/forecast` +
+      `?latitude=${lats}&longitude=${lons}` +
+      `&daily=precipitation_sum` +
+      `&timezone=auto&past_days=1&forecast_days=1`;
+
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`Open-Meteo HTTP ${res.status}`);
+
+    const json = await res.json();
+
+    // Single district returns an object; multiple return an array
+    const responses: Array<{ daily: { precipitation_sum: (number | null)[] } }> =
+      Array.isArray(json) ? json : [json];
+
+    const map = new Map<number, number>();
+    districts.forEach((d, i) => {
+      // index 0 = yesterday (past_days=1), index 1 = today forecast
+      const raw = responses[i]?.daily?.precipitation_sum?.[0];
+      map.set(d.id, typeof raw === "number" ? raw : d.rainfall24h);
+    });
+
+    rainfallCache = { fetchedAt: Date.now(), data: map };
+    return map;
+  } catch (err) {
+    console.warn("[Open-Meteo] Rainfall fetch failed, using seeded values:", (err as Error).message);
+    // On failure: build map from seeded values so nothing downstream breaks
+    const fallback = new Map(districts.map((d) => [d.id, d.rainfall24h]));
+    return fallback;
+  }
+}
+
+// ─── Risk score formula (0.4 / 0.3 / 0.3) ───────────────────────────────────
+/**
+ * All three inputs are normalised to [0, 100] before weighting so the formula
+ * is dimensionally consistent:
+ *
+ *   rainfallScore = min(rainfall_mm / 200, 1) × 100   (200mm/day = extreme)
+ *   riverScore    = min(riverLevel / dangerLevel / 1.3, 1) × 100
+ *                   (130% of danger level = maximum hazard)
+ *   riseScore     = min(rateOfRise_m / 0.5, 1) × 100  (0.5m/3h = extreme)
+ *
+ *   riskScore = 0.4 × rainfallScore + 0.3 × riverScore + 0.3 × riseScore
+ *
+ * Risk levels derived from riskScore:
+ *   >= 70  → critical
+ *   >= 48  → high
+ *   >= 28  → moderate
+ *   <  28  → low
+ */
+function computeRiskScore(
+  rainfall24h: number,
+  riverLevel: number,
+  dangerLevel: number,
+  rateOfRise: number,
+): { riskScore: number; riskLevel: "low" | "moderate" | "high" | "critical" } {
+  const rainfallScore = Math.min(rainfall24h / 200, 1) * 100;
+  const riverScore =
+    dangerLevel > 0 ? Math.min(riverLevel / dangerLevel / 1.3, 1) * 100 : 0;
+  const riseScore = Math.min(rateOfRise / 0.5, 1) * 100;
+
+  const riskScore = Math.round(0.4 * rainfallScore + 0.3 * riverScore + 0.3 * riseScore);
+
+  const riskLevel: "low" | "moderate" | "high" | "critical" =
+    riskScore >= 70
+      ? "critical"
+      : riskScore >= 48
+        ? "high"
+        : riskScore >= 28
+          ? "moderate"
+          : "low";
+
+  return { riskScore, riskLevel };
+}
+
+// ─── Rate-of-Rise helpers ────────────────────────────────────────────────────
+const RISE_THRESHOLD_METERS = 0.2;
+const RISE_WINDOW_MS = 3 * 60 * 60 * 1000;
+
 async function computeRateOfRise(): Promise<
   Map<string, { rise: number; triggered: boolean }>
 > {
   const windowStart = new Date(Date.now() - RISE_WINDOW_MS);
 
-  // All stations (lightweight – no readings yet)
   const allStations = await db.select().from(stationsTable);
   if (allStations.length === 0) return new Map();
 
   const stationIds = allStations.map((s) => s.id);
 
-  // Readings inside the 3-hour window for all stations in one query
   const recentReadings = await db
     .select({
       stationId: stationReadingsTable.stationId,
@@ -48,12 +139,11 @@ async function computeRateOfRise(): Promise<
     .where(
       and(
         gte(stationReadingsTable.timestamp, windowStart),
-        inArray(stationReadingsTable.stationId, stationIds)
-      )
+        inArray(stationReadingsTable.stationId, stationIds),
+      ),
     )
     .orderBy(stationReadingsTable.timestamp);
 
-  // Group readings by stationId
   const byStation = new Map<number, { ts: Date; level: number }[]>();
   for (const r of recentReadings) {
     const arr = byStation.get(r.stationId) ?? [];
@@ -61,7 +151,6 @@ async function computeRateOfRise(): Promise<
     byStation.set(r.stationId, arr);
   }
 
-  // Build district name → station ids map
   const stationsByDistrict = new Map<string, number[]>();
   for (const s of allStations) {
     const ids = stationsByDistrict.get(s.district) ?? [];
@@ -69,7 +158,6 @@ async function computeRateOfRise(): Promise<
     stationsByDistrict.set(s.district, ids);
   }
 
-  // Compute max rise per district
   const result = new Map<string, { rise: number; triggered: boolean }>();
   for (const [districtName, ids] of stationsByDistrict) {
     let maxRise = 0;
@@ -82,7 +170,7 @@ async function computeRateOfRise(): Promise<
       if (rise > maxRise) maxRise = rise;
     }
     result.set(districtName, {
-      rise: Math.round(maxRise * 100) / 100, // 2 dp
+      rise: Math.round(maxRise * 100) / 100,
       triggered: maxRise > RISE_THRESHOLD_METERS,
     });
   }
@@ -99,21 +187,34 @@ router.get("/districts", async (_req, res) => {
       computeRateOfRise(),
     ]);
 
+    // Fetch live rainfall for all districts in one batched request
+    const rainfallMap = await fetchLiveRainfall(districts);
+
     const result = districts.map((d) => {
       const ror = rateOfRiseMap.get(d.name) ?? { rise: 0, triggered: false };
+      const liveRainfall = rainfallMap.get(d.id) ?? d.rainfall24h;
 
-      // Upgrade risk level to CRITICAL if rapid rise detected, even when the
-      // absolute river level is still below the danger mark.
+      // Compute risk score using the 0.4/0.3/0.3 formula with live data
+      const { riskScore, riskLevel } = computeRiskScore(
+        liveRainfall,
+        d.riverLevel,
+        d.dangerLevel,
+        ror.rise,
+      );
+
+      // Rate-of-rise can independently force "critical" regardless of formula
       const effectiveRiskLevel =
-        ror.triggered && d.riskLevel !== "critical" ? "critical" : d.riskLevel;
+        ror.triggered && riskLevel !== "critical" ? "critical" : riskLevel;
+      const effectiveRiskScore =
+        ror.triggered && riskScore < 90 ? Math.max(riskScore, 90) : riskScore;
 
       return {
         id: d.id,
         name: d.name,
         state: d.state,
         riskLevel: effectiveRiskLevel,
-        riskScore: ror.triggered && d.riskScore < 90 ? Math.max(d.riskScore, 90) : d.riskScore,
-        rainfall24h: d.rainfall24h,
+        riskScore: effectiveRiskScore,
+        rainfall24h: Math.round(liveRainfall * 10) / 10,
         riverLevel: d.riverLevel,
         dangerLevel: d.dangerLevel,
         latitude: d.latitude,
@@ -142,14 +243,27 @@ router.get("/districts/:id", async (req, res) => {
     if (!district) {
       return res.status(404).json({ error: "District not found" });
     }
+
+    const rainfallMap = await fetchLiveRainfall([district]);
     const ror = rateOfRiseMap.get(district.name) ?? { rise: 0, triggered: false };
+    const liveRainfall = rainfallMap.get(district.id) ?? district.rainfall24h;
+
+    const { riskScore, riskLevel } = computeRiskScore(
+      liveRainfall,
+      district.riverLevel,
+      district.dangerLevel,
+      ror.rise,
+    );
     const effectiveRiskLevel =
-      ror.triggered && district.riskLevel !== "critical" ? "critical" : district.riskLevel;
+      ror.triggered && riskLevel !== "critical" ? "critical" : riskLevel;
+    const effectiveRiskScore =
+      ror.triggered && riskScore < 90 ? Math.max(riskScore, 90) : riskScore;
 
     res.json({
       ...district,
       riskLevel: effectiveRiskLevel,
-      riskScore: ror.triggered && district.riskScore < 90 ? Math.max(district.riskScore, 90) : district.riskScore,
+      riskScore: effectiveRiskScore,
+      rainfall24h: Math.round(liveRainfall * 10) / 10,
       lastUpdated: district.lastUpdated.toISOString(),
       rateOfRise: ror.rise,
       rateOfRiseTriggered: ror.triggered,
@@ -190,7 +304,7 @@ router.get("/alerts", async (req, res) => {
         ...a,
         isActive: a.isActive === 1,
         triggeredAt: a.triggeredAt.toISOString(),
-      }))
+      })),
     );
   } catch (err) {
     console.error(err);
@@ -216,13 +330,18 @@ router.get("/stations/:id/readings", async (req, res) => {
     const readings = await db
       .select()
       .from(stationReadingsTable)
-      .where(and(eq(stationReadingsTable.stationId, id), gte(stationReadingsTable.timestamp, since)))
+      .where(
+        and(
+          eq(stationReadingsTable.stationId, id),
+          gte(stationReadingsTable.timestamp, since),
+        ),
+      )
       .orderBy(stationReadingsTable.timestamp);
     res.json(
       readings.map((r) => ({
         ...r,
         timestamp: r.timestamp.toISOString(),
-      }))
+      })),
     );
   } catch (err) {
     console.error(err);
@@ -238,12 +357,25 @@ router.get("/summary", async (_req, res) => {
       computeRateOfRise(),
     ]);
 
-    // Apply rate-of-rise upgrades before summarising
+    const rainfallMap = await fetchLiveRainfall(districts);
+
+    // Apply live formula to each district before summarising
     const effectiveDistricts = districts.map((d) => {
       const ror = rateOfRiseMap.get(d.name) ?? { rise: 0, triggered: false };
+      const liveRainfall = rainfallMap.get(d.id) ?? d.rainfall24h;
+      const { riskScore, riskLevel } = computeRiskScore(
+        liveRainfall,
+        d.riverLevel,
+        d.dangerLevel,
+        ror.rise,
+      );
+      const effectiveRiskLevel =
+        ror.triggered && riskLevel !== "critical" ? "critical" : riskLevel;
       return {
         ...d,
-        riskLevel: ror.triggered && d.riskLevel !== "critical" ? "critical" : d.riskLevel,
+        riskLevel: effectiveRiskLevel,
+        riskScore,
+        rainfall24h: liveRainfall,
       };
     });
 
@@ -254,11 +386,11 @@ router.get("/summary", async (_req, res) => {
     const totalPopulationAtRisk = effectiveDistricts
       .filter((d) => d.riskLevel !== "low")
       .reduce((sum, d) => sum + d.populationAffected, 0);
-    const avgRainfall24h = districts.length
-      ? districts.reduce((sum, d) => sum + d.rainfall24h, 0) / districts.length
+    const avgRainfall24h = effectiveDistricts.length
+      ? effectiveDistricts.reduce((sum, d) => sum + d.rainfall24h, 0) / effectiveDistricts.length
       : 0;
     const statesAffected = new Set(
-      effectiveDistricts.filter((d) => d.riskLevel !== "low").map((d) => d.state)
+      effectiveDistricts.filter((d) => d.riskLevel !== "low").map((d) => d.state),
     ).size;
 
     res.json({
@@ -311,7 +443,7 @@ router.get("/authorities/evacuations", async (_req, res) => {
         ...o,
         villages: JSON.parse(o.villages),
         issuedAt: o.issuedAt.toISOString(),
-      }))
+      })),
     );
   } catch (err) {
     console.error(err);

@@ -17,57 +17,11 @@ async function seedData() {
     sql`TRUNCATE TABLE evacuation_orders, flood_alerts, station_readings, monitoring_stations, emergency_resources, districts RESTART IDENTITY CASCADE`,
   );
 
-  const fetchLiveFloodData = async (districtsData) => {
-    const updatedDistricts = await Promise.all(
-      districtsData.map(async (district) => {
-        try {
-          // Fetching real-time rainfall from Open-Meteo
-          const response = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${district.latitude}&longitude=${district.longitude}&current=precipitation&hourly=precipitation_24h`,
-          );
-          const data = await response.json();
-
-          // Get the current rainfall (default to 0 if null)
-          const liveRain = data.current?.precipitation || 0;
-
-          // Applying your 0.4 / 0.3 / 0.3 Weighted Formula
-          // We keep riverLevel and rateOfRise as baseline for this calculation
-          const calculatedScore =
-            liveRain * 0.4 +
-            district.riverLevel * 0.3 +
-            district.rateOfRise * 0.3;
-
-          return {
-            ...district,
-            rainfall24h: liveRain,
-            riskScore: Math.round(calculatedScore),
-            riskLevel:
-              calculatedScore > 80
-                ? "critical"
-                : calculatedScore > 60
-                  ? "high"
-                  : "moderate",
-            lastUpdated: new Date().toISOString(),
-          };
-        } catch (error) {
-          console.error("Failed to fetch live data for", district.name, error);
-          return district;
-        }
-      }),
-    );
-    return updatedDistricts;
-  };
-
-  useEffect(() => {
-    const loadData = async () => {
-      // Assuming 'districts' is your state and 'initialDistricts' is the static list
-      const liveData = await fetchLiveFloodData(districts);
-      setDistricts(liveData);
-    };
-    loadData();
-  }, []);
-
-  // Seed districts for Bihar, Assam, Kerala
+  // Seed districts for Bihar, Assam, Kerala.
+  // riskLevel/riskScore/rainfall24h are intentionally set to baseline defaults —
+  // the API recomputes them live using Open-Meteo + the 0.4/0.3/0.3 formula.
+  // riverLevel, dangerLevel, and populationAffected are physical constants from
+  // CWC gauge records and census data — they do not change in real time.
   const districts = await db
     .insert(districtsTable)
     .values([
@@ -500,11 +454,9 @@ async function seedData() {
 
   console.log(`Inserted ${stations.length} stations`);
 
-  // Seed 24 hours of readings for each station.
-  // Key design goal: Darbhanga (Hayaghat Gauge) and Dhemaji must show a
-  // measurable rate-of-rise > 0.2m within the last 3 hours so the backend
-  // rate-of-rise check is triggered even if their absolute level is below
-  // the danger mark.  All other stations follow a gentle random walk.
+  // Seed 48 half-hourly readings (24 hours) for each station.
+  // Darbhanga (Hayaghat Gauge) and Dhemaji must show a rate-of-rise > 0.2m
+  // in the last 3 hours so the backend rate-of-rise check is triggered.
   const RAPID_RISE_STATIONS = new Set(["Hayaghat Gauge", "Dhemaji Station"]);
   const now = Date.now();
   const readings = stations.flatMap((station) => {
@@ -515,20 +467,13 @@ async function seedData() {
 
       let riverLevel: number;
       if (RAPID_RISE_STATIONS.has(station.name)) {
-        // Baseline: level is ~0.5m below current (level "now" = currentLevel)
-        // Ramp it up over the 24h window; rapid acceleration in the last 3h.
-        const baselineRise = (i / 47) * 0.5; // slow underlying rise over 24h
-        const rapidRise = isRecentReading ? (i - 42) * 0.065 : 0; // +0.065m per 30-min step = ~0.39m in 3h
+        const baselineRise = (i / 47) * 0.5;
+        const rapidRise = isRecentReading ? (i - 42) * 0.065 : 0;
         riverLevel = Math.max(
           0,
-          station.currentLevel -
-            0.5 +
-            baselineRise +
-            rapidRise +
-            fluctuation * 0.3,
+          station.currentLevel - 0.5 + baselineRise + rapidRise + fluctuation * 0.3,
         );
       } else {
-        // Gentle random walk for all other stations
         const gentleTrend = (i / 47) * 0.3;
         riverLevel = Math.max(
           0,
@@ -550,134 +495,27 @@ async function seedData() {
 
   // Seed emergency resources
   await db.insert(emergencyResourcesTable).values([
-    {
-      type: "rescue_boat",
-      district: "Darbhanga",
-      state: "Bihar",
-      count: 24,
-      deployed: 18,
-      status: "deployed",
-    },
-    {
-      type: "ndrf_team",
-      district: "Darbhanga",
-      state: "Bihar",
-      count: 4,
-      deployed: 4,
-      status: "deployed",
-    },
-    {
-      type: "helicopter",
-      district: "Muzaffarpur",
-      state: "Bihar",
-      count: 3,
-      deployed: 2,
-      status: "deployed",
-    },
-    {
-      type: "medical_team",
-      district: "Muzaffarpur",
-      state: "Bihar",
-      count: 8,
-      deployed: 6,
-      status: "deployed",
-    },
-    {
-      type: "relief_camp",
-      district: "Sitamarhi",
-      state: "Bihar",
-      count: 12,
-      deployed: 9,
-      status: "deployed",
-    },
-    {
-      type: "rescue_boat",
-      district: "Dhemaji",
-      state: "Assam",
-      count: 18,
-      deployed: 15,
-      status: "deployed",
-    },
-    {
-      type: "ndrf_team",
-      district: "Dhemaji",
-      state: "Assam",
-      count: 3,
-      deployed: 3,
-      status: "deployed",
-    },
-    {
-      type: "helicopter",
-      district: "Lakhimpur",
-      state: "Assam",
-      count: 2,
-      deployed: 2,
-      status: "deployed",
-    },
-    {
-      type: "medical_team",
-      district: "Lakhimpur",
-      state: "Assam",
-      count: 6,
-      deployed: 4,
-      status: "deployed",
-    },
-    {
-      type: "rescue_boat",
-      district: "Alappuzha",
-      state: "Kerala",
-      count: 16,
-      deployed: 12,
-      status: "deployed",
-    },
-    {
-      type: "ndrf_team",
-      district: "Alappuzha",
-      state: "Kerala",
-      count: 2,
-      deployed: 2,
-      status: "deployed",
-    },
-    {
-      type: "relief_camp",
-      district: "Kottayam",
-      state: "Kerala",
-      count: 8,
-      deployed: 5,
-      status: "deployed",
-    },
-    {
-      type: "helicopter",
-      district: "Ernakulam",
-      state: "Kerala",
-      count: 2,
-      deployed: 1,
-      status: "deployed",
-    },
-    {
-      type: "rescue_boat",
-      district: "Supaul",
-      state: "Bihar",
-      count: 10,
-      deployed: 0,
-      status: "standby",
-    },
-    {
-      type: "medical_team",
-      district: "Kamrup",
-      state: "Assam",
-      count: 4,
-      deployed: 0,
-      status: "standby",
-    },
+    { type: "rescue_boat", district: "Darbhanga", state: "Bihar", count: 24, deployed: 18, status: "deployed" },
+    { type: "ndrf_team", district: "Darbhanga", state: "Bihar", count: 4, deployed: 4, status: "deployed" },
+    { type: "helicopter", district: "Muzaffarpur", state: "Bihar", count: 3, deployed: 2, status: "deployed" },
+    { type: "medical_team", district: "Muzaffarpur", state: "Bihar", count: 8, deployed: 6, status: "deployed" },
+    { type: "relief_camp", district: "Sitamarhi", state: "Bihar", count: 12, deployed: 9, status: "deployed" },
+    { type: "rescue_boat", district: "Dhemaji", state: "Assam", count: 18, deployed: 15, status: "deployed" },
+    { type: "ndrf_team", district: "Dhemaji", state: "Assam", count: 3, deployed: 3, status: "deployed" },
+    { type: "helicopter", district: "Lakhimpur", state: "Assam", count: 2, deployed: 2, status: "deployed" },
+    { type: "medical_team", district: "Lakhimpur", state: "Assam", count: 6, deployed: 4, status: "deployed" },
+    { type: "rescue_boat", district: "Alappuzha", state: "Kerala", count: 16, deployed: 12, status: "deployed" },
+    { type: "ndrf_team", district: "Alappuzha", state: "Kerala", count: 2, deployed: 2, status: "deployed" },
+    { type: "relief_camp", district: "Kottayam", state: "Kerala", count: 8, deployed: 5, status: "deployed" },
+    { type: "helicopter", district: "Ernakulam", state: "Kerala", count: 2, deployed: 1, status: "deployed" },
+    { type: "rescue_boat", district: "Supaul", state: "Bihar", count: 10, deployed: 0, status: "standby" },
+    { type: "medical_team", district: "Kamrup", state: "Assam", count: 4, deployed: 0, status: "standby" },
   ]);
   console.log("Inserted emergency resources");
 
-  // Seed evacuation orders
+  // Seed evacuation orders for the top critical/high districts
   const criticalAndHighDistricts = districts.filter(
-    (d) =>
-      d.riskLevel === "critical" ||
-      (d.riskLevel === "high" && d.riskScore > 70),
+    (d) => d.riskLevel === "critical" || (d.riskLevel === "high" && d.riskScore > 70),
   );
   await db.insert(evacuationOrdersTable).values([
     {
@@ -697,8 +535,7 @@ async function seedData() {
       issuedAt: new Date(Date.now() - 10 * 60 * 60 * 1000),
     },
     {
-      districtId:
-        criticalAndHighDistricts[2]?.id ?? criticalAndHighDistricts[0].id,
+      districtId: criticalAndHighDistricts[2]?.id ?? criticalAndHighDistricts[0].id,
       villages: JSON.stringify(["Pupri", "Bajpatti", "Parihar"]),
       estimatedPeople: 19500,
       evacuated: 19500,
@@ -706,8 +543,7 @@ async function seedData() {
       issuedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
     },
     {
-      districtId:
-        criticalAndHighDistricts[3]?.id ?? criticalAndHighDistricts[1].id,
+      districtId: criticalAndHighDistricts[3]?.id ?? criticalAndHighDistricts[1].id,
       villages: JSON.stringify(["Majgaon", "Dhemaji Town", "Sissiborgaon"]),
       estimatedPeople: 45000,
       evacuated: 31200,
@@ -715,8 +551,7 @@ async function seedData() {
       issuedAt: new Date(Date.now() - 8 * 60 * 60 * 1000),
     },
     {
-      districtId:
-        criticalAndHighDistricts[4]?.id ?? criticalAndHighDistricts[0].id,
+      districtId: criticalAndHighDistricts[4]?.id ?? criticalAndHighDistricts[0].id,
       villages: JSON.stringify(["Boginadi", "Narayanpur"]),
       estimatedPeople: 12000,
       evacuated: 4800,
