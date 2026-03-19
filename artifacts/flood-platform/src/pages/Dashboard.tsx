@@ -51,20 +51,27 @@ export default function Dashboard() {
           "https://api.open-meteo.com/v1/forecast?latitude=25.594&longitude=85.137&hourly=precipitation,river_discharge&past_days=1",
         );
         const result = await response.json();
-        const formatted = result.hourly.time.slice(-7).map((time: string, index: number) => ({
-          time: new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          level: result.hourly.river_discharge
-            ? result.hourly.river_discharge[index]
-            : 4 + Math.random(),
-          rain: result.hourly.precipitation[index],
-        }));
+        const formatted = result.hourly.time
+          .slice(-7)
+          .map((time: string, index: number) => ({
+            time: new Date(time).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            level: result.hourly.river_discharge
+              ? result.hourly.river_discharge[index]
+              : 4 + Math.random(),
+            rain: result.hourly.precipitation[index],
+          }));
         if (!cancelled) setTrendData(formatted);
       } catch {
-        // keep fallback data
+        // keep fallback data on error
       }
     };
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (loadingSummary) {
@@ -253,7 +260,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {topDistricts.map((d, i) => (
+                {topDistricts.map((d) => (
                   <tr
                     key={d.id}
                     className="border-b border-border/50 hover:bg-muted/20 transition-colors"
