@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   useLiveDashboard,
-  useLiveDistricts,
+  useEnrichedDistricts,
   useLiveAlerts,
 } from "@/hooks/use-flood-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,7 +38,7 @@ const FALLBACK_TREND = [
 
 export default function Dashboard() {
   const { data: summary, isLoading: loadingSummary } = useLiveDashboard();
-  const { data: districts } = useLiveDistricts();
+  const { data: districts, isEnriching } = useEnrichedDistricts();
   const { data: alerts } = useLiveAlerts();
 
   const [trendData, setTrendData] = useState(FALLBACK_TREND);
@@ -95,6 +95,19 @@ export default function Dashboard() {
           <p className="text-muted-foreground mt-1 text-sm">
             Real-time flood risk analytics and active monitoring.
           </p>
+        </div>
+        <div className="flex items-center gap-2 text-xs font-mono">
+          {isEnriching ? (
+            <span className="flex items-center gap-1.5 text-yellow-400 animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 inline-block" />
+              FETCHING LIVE RAINFALL…
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-green-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
+              OPEN-METEO LIVE
+            </span>
+          )}
         </div>
       </div>
 
